@@ -9,7 +9,7 @@ function threshold = ComputeAdaptiveThreshold(samplesize,SlideName)
     warning('off')
     OriginalImgName = [SlideName,'.tif'];
     tilenumPoolName = [SlideName,'tilenumPool.mat'];
-    load (tilenumPoolName);
+    load(tilenumPoolName); % this shows which tiles in this slide are non-background
     
     %% read img info %%
     t = Tiff(OriginalImgName,'r');
@@ -57,24 +57,63 @@ function threshold = ComputeAdaptiveThreshold(samplesize,SlideName)
     end
     
     %% compute threshold %%
-    NO_Total = sum(NO_Table);
+    NO_Total = sum(NO_Table);%/size(NO_Table,1);
     ax = size(NO_Total,2);
+    
+    % instead of using the actual threshold values, we're replacing them with
+    % placeholder integers, then we'll convert back at the end
     x = 1:1:ax;
-    degree = 20;
-    p = polyfit(x,NO_Total,degree);  
-    Y = polyval(p,x);     
-    Y_2 = diff(diff(Y));  
-    Y_1 = diff(Y);         
-    [peaks_first,locs_first] = findpeaks(Y_1,x(1,1:end-1));       
-    [peaks_or,locs_or] = findpeaks(Y,x);         
-    [peaks_second,locs_second] = findpeaks(Y_2,x(1,2:end-1));
-    locs_value = locs_second(find(peaks_second == max(peaks_second)));      
-    while locs_value < locs_or(find(peaks_or == max(peaks_or)))   
-        peaks_second(find(locs_second == locs_value)) = 0;
-        locs_value = locs_second(find(peaks_second == max(peaks_second)));   
+        
+    % fit 20th degree polynomial to number of connected components (y) vs
+    % threshold (x)
+    dPolynomialDegree = 20;
+    vdCoeffientsp = polyfit(x,NO_Total,dPolynomialDegree);  
+    
+    % evaluate polynomial at all x values
+    vdConnectedComponentCurve = polyval(vdCoeffientsp,x);
+    
+    % take the first and secodn derivatives 
+    vdFirstDerivative = diff(vdConnectedComponentCurve);       
+    vdSecondDerivative = diff(diff(vdConnectedComponentCurve)); 
+    
+%     % Plot
+%     figure; subplot(1,3,1); plot(x,vdConnectedComponentCurve)
+%     grid on
+%     subplot(1,3,2); plot(vdFirstDerivative)
+%     grid on
+%     subplot(1,3,3); plot(vdSecondDerivative)
+%     grid on
+    
+    % find the peaks in all curves. Not sure why the x values are truncated
+    % that way.... 
+    [vdPeaks_y,vdPeaks_x] = findpeaks(vdConnectedComponentCurve,x);  
+    [~,vdPeaksFirstDerivative_x] = findpeaks(vdFirstDerivative,x(1,1:end-1));
+    [vdPeaksSecondDerivative_y,vdPeaksSecondDerivative_x] = findpeaks(vdSecondDerivative,x(1,2:end-1)); % x values +1?? why?
+    
+    % find the x-axis value for the largest peak of the the second derivative    
+    dLargestPeakOfSecondDerivative_x = vdPeaksSecondDerivative_x(find(vdPeaksSecondDerivative_y == max(vdPeaksSecondDerivative_y)));
+    
+    % if the x-axis value of the largest peak in the second derivative is
+    % less than the x-axis value (i.e. happens at a lower threshold) of the original curve
+    % check the next largest peak, and keep going until you find a peak
+    % that is at a threshold lower than that of the largest peak of the
+    % original curve
+    while dLargestPeakOfSecondDerivative_x < vdPeaks_x(find(vdPeaks_y == max(vdPeaks_y)))
+        
+        % Zero out the largest peak in the second derivative curve
+        vdPeaksSecondDerivative_y(find(vdPeaksSecondDerivative_x == dLargestPeakOfSecondDerivative_x)) = 0;
+        
+        % Look for the next largest one
+        dLargestPeakOfSecondDerivative_x = vdPeaksSecondDerivative_x(find(vdPeaksSecondDerivative_y == max(vdPeaksSecondDerivative_y)));   
     end
-    locs_value_first = locs_first(locs_first > locs_value);
-    locs_thresh = locs_value_first(1,1);
+    
+    % Take the first peak in the first derivative that is at a threshold
+    % above the second derivative peak
+    % this is the first major dip in the connected component curve after
+    % the largest amount of connected components is reached. At this point,
+    % we loose a lot of small pieces, making way for the nuclei
+    vdFirstDerivativePeaksAboveLargestPeak_x = vdPeaksFirstDerivative_x(vdPeaksFirstDerivative_x > dLargestPeakOfSecondDerivative_x);
+    locs_thresh = vdFirstDerivativePeaksAboveLargestPeak_x(1,1);
     threshold = (locs_thresh-1)*0.1;   %% threshold value starts from zero while location value from 1
       
 end
